@@ -21,6 +21,9 @@ def main():
     # Pygame clock to manage framerate
     clock = pygame.time.Clock()
 
+    # Variable to lock onto a vertex during sculpting
+    locked_vertex = -1
+
     print("SYSTEM ONLINE. Point to rotate, Pinch to move.")
 
     running = True
@@ -44,6 +47,25 @@ def main():
         img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         hand_data = gestures.process_frame(img_rgb)
         
+        # Cyberpunk HUD Processing
+        h, w = frame.shape[:2]
+        
+        # Dim the webcam slightly for that "holographic blueprint" contrast
+        frame = cv2.convertScaleAbs(frame, alpha=0.5, beta=0) 
+        
+        # Draw Cyberpunk Grid
+        for i in range(0, w, 150):
+            cv2.line(frame, (i, 0), (i, h), (0, 40, 20), 1)
+        for i in range(0, h, 150):
+            cv2.line(frame, (0, i), (w, i), (0, 40, 20), 1)
+            
+        # Draw Text UI
+        cv2.putText(frame, "J.A.R.V.I.S. // SPATIAL OS v2.0", (30, 40), cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 255, 255), 2)
+        cv2.putText(frame, f"TRACKING NODES: {len(hand_data)}", (30, 70), cv2.FONT_HERSHEY_PLAIN, 1.2, (0, 200, 200), 1)
+        
+        # Display Current Mode
+        mode_text = "[IDLE]"
+        
         # Draw the physical hand wireframes onto the video frame
         if hand_data:
             for hand in hand_data:
@@ -51,8 +73,8 @@ def main():
                     frame, 
                     hand['raw_hand'], 
                     mp_hands.HAND_CONNECTIONS,
-                    mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=4), # Green glowing effect
-                    mp_drawing.DrawingSpec(color=(255, 255, 255), thickness=2, circle_radius=2)
+                    mp_drawing.DrawingSpec(color=(255, 0, 255), thickness=2, circle_radius=4), # Neon Pink Nodes
+                    mp_drawing.DrawingSpec(color=(0, 255, 255), thickness=2, circle_radius=2)  # Cyan connections
                 )
 
         # 5. RENDER PHASE 1: Draw the flat 2D video background
@@ -62,38 +84,70 @@ def main():
         renderer.setup_perspective()
 
         # 7. INTERACTION LOGIC
+        holo.hovered_vertex = -1
+
         if hand_data:
-            # For the MVP, we just track the first active hand
             primary_hand = hand_data[0]
             current_state = primary_hand['gesture']
             landmarks = primary_hand['landmarks']
             
-            # Extract Index Finger coordinate (Point 8 in MediaPipe)
             index_x = landmarks[8].x * w
             index_y = landmarks[8].y * h
+            
+            # --- PHASE 2: RAYCASTING ---
+            # Check if our finger is intersecting any 3D corners!
+            closest_v = holo.find_closest_vertex(index_x, index_y)
+            
+            # Draw targeting reticle
+            cv2.circle(frame, (int(index_x), int(index_y)), 10, (0, 255, 255), 2)
 
-            # We need historical data to know how *fast* and what *direction* you moved
+            if closest_v != -1 and current_state == Gesture.POINT:
+                holo.hovered_vertex = closest_v
+                cv2.putText(frame, f"TARGET LOCKED: v_{closest_v}", (int(index_x)+20, int(index_y)), cv2.FONT_HERSHEY_PLAIN, 1.2, (0, 255, 255), 2)
+                mode_text = "[TARGETING]"
+
             if prev_x is not None and prev_y is not None:
                 dx = index_x - prev_x
                 dy = index_y - prev_y
 
-                # --- THE BRAIN OF THE APP ---
-                if current_state == Gesture.POINT:
-                    # Laser-pointer mode -> Spins the object
-                    holo.apply_rotation(dx * 0.4, dy * 0.4)
-                
-                elif current_state == Gesture.PINCH:
-                    # Pinch mode -> Translates (drags) the object in 3D space
-                    # We multiply by 0.01 because OpenGL uses tiny measurement units
-                    holo.apply_translation(dx * 0.01, dy * 0.01)
+                # --- PHASE 2: SCULPTING LOGIC ---
+                if current_state == Gesture.PINCH:
+                    if locked_vertex == -1 and closest_v != -1:
+                        locked_vertex = closest_v # Grab the vertex!
+                        
+                    if locked_vertex != -1:
+                        # We are pinching an exact point! Deform the mesh!
+                        holo.hovered_vertex = locked_vertex
+                        holo.deform_vertex(locked_vertex, dx * 0.005, dy * 0.005)
+                        mode_text = "[SCULPTING PROTOCOL]"
+                        cv2.putText(frame, "DEFORMING MESH", (int(index_x)+20, int(index_y)), cv2.FONT_HERSHEY_PLAIN, 1.2, (255, 0, 255), 2)
+                    else:
+                        # Not hovering anything, move the whole object
+                        holo.apply_translation(dx * 0.01, dy * 0.01)
+                        mode_text = "[TRANSLATE]"
+                        
+                elif current_state == Gesture.POINT:
+                    # Release the vertex lock if we stop pinching
+                    locked_vertex = -1 
+                    if holo.hovered_vertex == -1:
+                        holo.apply_rotation(dx * 0.4, dy * 0.4)
+                        mode_text = "[ORBIT]"
+                else:
+                     locked_vertex = -1
+            else:
+                 locked_vertex = -1
 
-            # Store the current position for the next loop
             prev_x, prev_y = index_x, index_y
         else:
-            # If the hand leaves the screen, wipe the history so it doesn't teleport
-            # when the hand enters the screen again.
             prev_x, prev_y = None, None
+            locked_vertex = -1
 
+        # Render HUD Mode Text
+        cv2.putText(frame, mode_text, (30, 100), cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 0, 255) if "SCULPT" in mode_text else (0, 255, 0), 2)
+        
+        # WE MUST DRAW THE BACKGROUND *AFTER* ADDING OUR OpenCV HUD TEXT!
+        renderer.draw_background(frame)
+        
         # 8. RENDER PHASE 3: Draw the modified 3D model
         holo.render()
 
