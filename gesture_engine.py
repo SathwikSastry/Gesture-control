@@ -6,12 +6,24 @@ import mediapipe.python.solutions.hands as mp_hands
 # and makes it incredibly easy to add new gestures later.
 class Gesture(Enum):
     NONE = "NONE"
-    POINT = "POINT"           # Only index finger up (Laser pointer)
-    PINCH = "PINCH"           # Thumb and index tips touching
-    GRAB = "GRAB"             # All fingers closed (Fist)
-    OPEN_PALM = "OPEN_PALM"   # All fingers spread open
+    POINT = "POINT"           # Only index finger up
+    PINCH = "PINCH"           # Thumb and index touching
+    GRAB = "GRAB"             # Fist
+    OPEN_PALM = "OPEN_PALM"   # All open
+    PEACE = "PEACE_SIGN"      # Spawn Object
+    SPIDERMAN = "SPIDERMAN"   # Toggle X-Ray
+    SHAKA = "SHAKA"           # Undo Action
+    MIDDLE = "MIDDLE_FINGER"  # Delete Object
+    THUMBS_UP = "THUMBS_UP"   # Scale Up
+    THUMBS_DOWN = "THUMBS_DOWN" # Scale Down
+    GUN = "GUN"               # Shoot/Explode
     OPEN_WIDENED = "OPEN_WIDENED" # All fingers open and spread wide (For future use)   
     OPEN_CLOSED = "OPEN_CLOSED" # All fingers open but close together (For future use)
+    THUMBS_UP = "THUMBS_UP"   # Only thumb up (For future use)
+    INDEX_UP = "INDEX_UP"       # Only index finger up (For future use)
+    MIDDLE_UP = "MIDDLE_UP"     # Only middle finger up (For future use)
+    RING_UP = "RING_UP"         # Only ring finger up (For future use)
+    PINKY_UP = "PINKY_UP"       # Only pinky finger up (For future use)
 
 class GestureEngine:
     def __init__(self, min_detection_confidence=0.7, min_tracking_confidence=0.7):
@@ -83,18 +95,37 @@ class GestureEngine:
 
         # 3. Match states based on open fingers
         if total_fingers == 0:
-            return Gesture.GRAB # Fist
+            return Gesture.GRAB
             
         elif total_fingers == 5:
             return Gesture.OPEN_PALM
             
-        # If ONLY the index finger (position 1 in our list) is open
         elif fingers_open == [0, 1, 0, 0, 0] or fingers_open == [1, 1, 0, 0, 0]:
+            # Distinguish between Point and Gun
+            if fingers_open[0] == 1:
+                return Gesture.GUN
             return Gesture.POINT
             
-        # Add new gestures here easily! Example:
-        # elif fingers_open == [0, 1, 1, 0, 0]: 
-        #     return Gesture.PEACE_SIGN
+        elif fingers_open == [0, 1, 1, 0, 0] or fingers_open == [1, 1, 1, 0, 0]:
+            return Gesture.PEACE
+            
+        elif fingers_open == [0, 0, 1, 0, 0] or fingers_open == [1, 0, 1, 0, 0]:
+            return Gesture.MIDDLE
+            
+        elif fingers_open == [1, 0, 0, 0, 1] or fingers_open == [0, 0, 0, 0, 1]:
+            return Gesture.SHAKA
+            
+        elif fingers_open == [1, 1, 0, 0, 1] or fingers_open == [0, 1, 0, 0, 1]:
+            return Gesture.SPIDERMAN
+            
+        elif fingers_open == [1, 0, 0, 0, 0]:
+            # Thumb is up, check if pointing up or down
+            thumb_tip = landmarks[self.TIP_IDS[0]]
+            thumb_base = landmarks[self.TIP_IDS[0] - 2]
+            if thumb_tip.y < thumb_base.y: # Y is inverted on screen
+                return Gesture.THUMBS_UP
+            else:
+                return Gesture.THUMBS_DOWN
 
         return Gesture.NONE
 

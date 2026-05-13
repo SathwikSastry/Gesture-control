@@ -1,9 +1,44 @@
 import math
+import copy
 from OpenGL.GL import *
 from OpenGL.GLU import *
 
-class Hologram:
+class SceneMaster:
+    """Controls the entire 3D universe, holding multiple objects and history."""
     def __init__(self):
+        self.objects = [Hologram(pos_x=0.0, pos_y=0.0, pos_z=-5.0)]
+        self.active_index = 0
+        self.history_stack = []
+        self.xray_mode = False
+
+    def render_scene(self):
+        for i, obj in enumerate(self.objects):
+            obj.render(is_active=(i == self.active_index), xray=self.xray_mode)
+
+    def save_history(self):
+        """Saves a Deep Copy of the entire universe for the SHAKA Undo gesture."""
+        if len(self.objects) > 0:
+            self.history_stack.append(copy.deepcopy(self.objects[self.active_index].vertices))
+            if len(self.history_stack) > 10:
+                self.history_stack.pop(0)
+
+    def undo(self):
+        if self.history_stack and self.objects:
+            self.objects[self.active_index].vertices = self.history_stack.pop()
+
+    def spawn_object(self, x, y):
+        # Spawn a new cube slightly offset
+        new_cube = Hologram(pos_x=0.0, pos_y=0.0, pos_z=-5.0)
+        self.objects.append(new_cube)
+        self.active_index = len(self.objects) - 1
+        
+    def delete_active(self):
+        if len(self.objects) > 0:
+            self.objects.pop(self.active_index)
+            self.active_index = max(0, len(self.objects) - 1)
+
+class Hologram:
+    def __init__(self, pos_x=0.0, pos_y=0.0, pos_z=-5.0):
         # A simple cube for our initial MVP
         self.vertices = [
             [1.0, -1.0, -1.0], [1.0, 1.0, -1.0], [-1.0, 1.0, -1.0], [-1.0, -1.0, -1.0],
@@ -26,7 +61,7 @@ class Hologram:
         ]
         
         # Transform states
-        self.pos_x, self.pos_y, self.pos_z = 0.0, 0.0, -5.0
+        self.pos_x, self.pos_y, self.pos_z = pos_x, pos_y, pos_z
         self.rot_x, self.rot_y = 0.0, 0.0
         self.scale = 1.0
 
@@ -36,7 +71,7 @@ class Hologram:
         self.viewport = None
         self.hovered_vertex = -1
 
-    def render(self):
+    def render(self, is_active=True, xray=False):
         """Draws the 3D model applying all physics and math transformations."""
         glPushMatrix() 
         
@@ -50,42 +85,49 @@ class Hologram:
         # 3. Scale (Resize the object)
         glScalef(self.scale, self.scale, self.scale)
 
-        # CAPTURE MATRICES: We save these variables right now before drawing 
-        # so Phase 2 Raycasting knows exactly where the cube is on screen!
+        # CAPTURE MATRICES
         self.modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
         self.projection = glGetDoublev(GL_PROJECTION_MATRIX)
         self.viewport = glGetIntegerv(GL_VIEWPORT)
 
         # Draw the solid faces (Translucent Cyberpunk Wiremesh)
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        glBegin(GL_QUADS)
-        glColor4f(0.05, 0.15, 0.2, 0.6) # Translucent Dark Cyber Blue
-        for face in self.faces:
-            for vertex in face:
-                glVertex3fv(self.vertices[vertex])
-        glEnd()
-        glDisable(GL_BLEND)
+        if not xray:
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            glBegin(GL_QUADS)
+            if is_active:
+                glColor4f(0.05, 0.15, 0.2, 0.6) # Active Translucent Cyber Blue
+            else:
+                glColor4f(0.3, 0.0, 0.0, 0.4)   # Inactive Dark Red
+            for face in self.faces:
+                for vertex in face:
+                    glVertex3fv(self.vertices[vertex])
+            glEnd()
+            glDisable(GL_BLEND)
 
-        # Draw the wireframe outline (Electric Cyan)
-        glLineWidth(2.0)
+        # Draw the wireframe outline
+        glLineWidth(2.0 if is_active else 1.0)
         glBegin(GL_LINES)
-        glColor3f(0.0, 0.8, 1.0) # Bright Cyan
+        if is_active:
+            glColor3f(0.0, 0.8, 1.0) # Bright Cyan
+        else:
+            glColor3f(0.5, 0.0, 0.0) # Dim Red
         for edge in self.edges:
             for vertex in edge:
                 glVertex3fv(self.vertices[vertex])
         glEnd()
 
-        # Phase 2: Draw glowing vertex nodes
-        glPointSize(10.0)
-        glBegin(GL_POINTS)
-        for i, vertex in enumerate(self.vertices):
-            if i == self.hovered_vertex:
-                glColor3f(1.0, 0.0, 1.0) # Neon Magenta for hovered!
-            else:
-                glColor3f(0.0, 1.0, 0.8) # Normal cyan nodes
-            glVertex3fv(vertex)
-        glEnd()
+        # Draw glowing vertex nodes only if active
+        if is_active:
+            glPointSize(10.0)
+            glBegin(GL_POINTS)
+            for i, vertex in enumerate(self.vertices):
+                if i == self.hovered_vertex:
+                    glColor3f(1.0, 0.0, 1.0) # Neon Magenta for hovered!
+                else:
+                    glColor3f(0.0, 1.0, 0.8) # Normal cyan nodes
+                glVertex3fv(vertex)
+            glEnd()
         
         glPopMatrix()
 

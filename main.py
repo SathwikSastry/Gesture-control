@@ -4,16 +4,16 @@ import mediapipe.python.solutions.hands as mp_hands
 import mediapipe.python.solutions.drawing_utils as mp_drawing
 from camera_renderer import Renderer
 from gesture_engine import GestureEngine, Gesture
-from physics_engine import Hologram
+from physics_engine import SceneMaster
 
 def main():
-    print("INITIALIZING J.A.R.V.I.S. INTERFACE...")
+    print("INITIALIZING O.D.I.N. INTERFACE...")
     
     # 1. Boot up our core systems
     cap = cv2.VideoCapture(0)
     renderer = Renderer(width=1280, height=720) # AR Video Engine
     gestures = GestureEngine()                  # AI State Machine
-    holo = Hologram()                           # 3D Math Engine
+    scene = SceneMaster()                       # Phase 3 Scene Manager
 
     # Variables to track hand movement between frames (for deltas)
     prev_x, prev_y = None, None
@@ -23,6 +23,9 @@ def main():
 
     # Variable to lock onto a vertex during sculpting
     locked_vertex = -1
+    
+    # Cooldown timer to prevent commands firing 60 times a second
+    action_cooldown = 0
 
     print("SYSTEM ONLINE. Point to rotate, Pinch to move.")
 
@@ -60,8 +63,9 @@ def main():
             cv2.line(frame, (0, i), (w, i), (0, 40, 20), 1)
             
         # Draw Text UI
-        cv2.putText(frame, "J.A.R.V.I.S. // SPATIAL OS v2.0", (30, 40), cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 255, 255), 2)
-        cv2.putText(frame, f"TRACKING NODES: {len(hand_data)}", (30, 70), cv2.FONT_HERSHEY_PLAIN, 1.2, (0, 200, 200), 1)
+        cv2.putText(frame, "O.D.I.N. // SPATIAL OS v3.0", (30, 40), cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 0, 255), 2)
+        cv2.putText(frame, f"TRACKING NODES: {len(hand_data)}", (30, 70), cv2.FONT_HERSHEY_PLAIN, 1.2, (0, 0, 200), 1)
+        cv2.putText(frame, f"ACTIVE OBJECTS: {len(scene.objects)}", (30, 100), cv2.FONT_HERSHEY_PLAIN, 1.2, (0, 0, 200), 1)
         
         # Display Current Mode
         mode_text = "[IDLE]"
@@ -84,7 +88,16 @@ def main():
         renderer.setup_perspective()
 
         # 7. INTERACTION LOGIC
-        holo.hovered_vertex = -1
+        if len(scene.objects) > 0:
+            target_obj = scene.objects[scene.active_index]
+        else:
+            target_obj = None
+
+        if target_obj:
+            target_obj.hovered_vertex = -1
+            
+        if action_cooldown > 0:
+            action_cooldown -= 1
 
         if hand_data:
             primary_hand = hand_data[0]
@@ -94,48 +107,70 @@ def main():
             index_x = landmarks[8].x * w
             index_y = landmarks[8].y * h
             
-            # --- PHASE 2: RAYCASTING ---
-            # Check if our finger is intersecting any 3D corners!
-            closest_v = holo.find_closest_vertex(index_x, index_y)
-            
-            # Draw targeting reticle
-            cv2.circle(frame, (int(index_x), int(index_y)), 10, (0, 255, 255), 2)
+            # --- PHASE 3: MACRO COMMANDS (No Math Delta needed) ---
+            if action_cooldown == 0:
+                if current_state == Gesture.PEACE:
+                    scene.spawn_object(0, 0)
+                    mode_text = "[SPAWNING NEW GEOMETRY]"
+                    action_cooldown = 30
+                elif current_state == Gesture.MIDDLE:
+                    scene.delete_active()
+                    mode_text = "[DELETING TARGET]"
+                    action_cooldown = 30
+                elif current_state == Gesture.SHAKA:
+                    scene.undo()
+                    mode_text = "[UNDO TIME-SHIFT]"
+                    action_cooldown = 30
+                elif current_state == Gesture.SPIDERMAN:
+                    scene.xray_mode = not scene.xray_mode
+                    mode_text = "[TOGGLING X-RAY VISION]"
+                    action_cooldown = 30
 
-            if closest_v != -1 and current_state == Gesture.POINT:
-                holo.hovered_vertex = closest_v
-                cv2.putText(frame, f"TARGET LOCKED: v_{closest_v}", (int(index_x)+20, int(index_y)), cv2.FONT_HERSHEY_PLAIN, 1.2, (0, 255, 255), 2)
-                mode_text = "[TARGETING]"
+            # --- PHASE 3: MICRO COMMANDS (Need Math Delta) ---
+            if target_obj:
+                closest_v = target_obj.find_closest_vertex(index_x, index_y)
+                cv2.circle(frame, (int(index_x), int(index_y)), 10, (0, 0, 255), 2) # Red reticle target
 
-            if prev_x is not None and prev_y is not None:
-                dx = index_x - prev_x
-                dy = index_y - prev_y
+                if closest_v != -1 and current_state == Gesture.POINT:
+                    target_obj.hovered_vertex = closest_v
+                    cv2.putText(frame, f"TARGET LOCKED: v_{closest_v}", (int(index_x)+20, int(index_y)), cv2.FONT_HERSHEY_PLAIN, 1.2, (0, 0, 255), 2)
+                    mode_text = "[TARGETING]"
 
-                # --- PHASE 2: SCULPTING LOGIC ---
-                if current_state == Gesture.PINCH:
-                    if locked_vertex == -1 and closest_v != -1:
-                        locked_vertex = closest_v # Grab the vertex!
-                        
-                    if locked_vertex != -1:
-                        # We are pinching an exact point! Deform the mesh!
-                        holo.hovered_vertex = locked_vertex
-                        holo.deform_vertex(locked_vertex, dx * 0.005, dy * 0.005)
-                        mode_text = "[SCULPTING PROTOCOL]"
-                        cv2.putText(frame, "DEFORMING MESH", (int(index_x)+20, int(index_y)), cv2.FONT_HERSHEY_PLAIN, 1.2, (255, 0, 255), 2)
+                if prev_x is not None and prev_y is not None:
+                    dx = index_x - prev_x
+                    dy = index_y - prev_y
+
+                    if current_state == Gesture.PINCH:
+                        if locked_vertex == -1 and closest_v != -1:
+                            locked_vertex = closest_v 
+                            scene.save_history() # Save state before we start stretching it!
+                            
+                        if locked_vertex != -1: # Sculpting
+                            target_obj.hovered_vertex = locked_vertex
+                            target_obj.deform_vertex(locked_vertex, dx * 0.005, dy * 0.005)
+                            mode_text = "[SCULPTING PROTOCOL]"
+                        else: # Translate
+                            target_obj.apply_translation(dx * 0.01, dy * 0.01)
+                            mode_text = "[TRANSLATE]"
+                            
+                    elif current_state == Gesture.POINT:
+                        locked_vertex = -1 
+                        if target_obj.hovered_vertex == -1:
+                            target_obj.apply_rotation(dx * 0.4, dy * 0.4)
+                            mode_text = "[ORBIT]"
+                            
+                    elif current_state == Gesture.THUMBS_UP:
+                        target_obj.apply_scale(0.05)
+                        mode_text = "[GROWING]"
+                    elif current_state == Gesture.THUMBS_DOWN:
+                        target_obj.apply_scale(-0.05)
+                        mode_text = "[SHRINKING]"
+                    elif current_state == Gesture.OPEN_PALM:
+                        mode_text = "[CALIBRATING]"
                     else:
-                        # Not hovering anything, move the whole object
-                        holo.apply_translation(dx * 0.01, dy * 0.01)
-                        mode_text = "[TRANSLATE]"
-                        
-                elif current_state == Gesture.POINT:
-                    # Release the vertex lock if we stop pinching
-                    locked_vertex = -1 
-                    if holo.hovered_vertex == -1:
-                        holo.apply_rotation(dx * 0.4, dy * 0.4)
-                        mode_text = "[ORBIT]"
+                         locked_vertex = -1
                 else:
                      locked_vertex = -1
-            else:
-                 locked_vertex = -1
 
             prev_x, prev_y = index_x, index_y
         else:
@@ -143,13 +178,13 @@ def main():
             locked_vertex = -1
 
         # Render HUD Mode Text
-        cv2.putText(frame, mode_text, (30, 100), cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 0, 255) if "SCULPT" in mode_text else (0, 255, 0), 2)
+        cv2.putText(frame, mode_text, (30, 130), cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 0, 255), 2)
         
-        # WE MUST DRAW THE BACKGROUND *AFTER* ADDING OUR OpenCV HUD TEXT!
+        # Draw background
         renderer.draw_background(frame)
         
-        # 8. RENDER PHASE 3: Draw the modified 3D model
-        holo.render()
+        # 8. RENDER PHASE 3: Draw entire scene
+        scene.render_scene()
 
         # 9. Push to screen
         renderer.update_display()
